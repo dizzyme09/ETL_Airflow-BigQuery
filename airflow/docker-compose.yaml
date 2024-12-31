@@ -77,16 +77,14 @@ x-airflow-common:
     GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS}
     AIRFLOW_CONN_GOOGLE_CLOUD_DEFAULT: "${AIRFLOW_CONN_GOOGLE_CLOUD_DEFAULT}"
 
-    GCP_PROJECT_ID: 'de-zoomcamp-445504'
-    GCP_GCS_BUCKET: 'data_lake_de-zoomcamp-445504'
+    GCP_PROJECT_ID: "${GCP_PROJECT_ID}"
+    GCP_GCS_BUCKET: "${GCP_GCS_BUCKET}"
   volumes:
     - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
     - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
     - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
     - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
-    - ~/.google/credentials/:/.google/credentials:ro
-    - ./dataset/raw:/opt/airflow/dataset/raw
-    - ./dataset/transform:/opt/airflow/dataset/transform
+    - PATH_TO_GOOGLE_APPLICATION_CREDENTIALS:.google/credentials/:ro
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     &airflow-common-depends-on

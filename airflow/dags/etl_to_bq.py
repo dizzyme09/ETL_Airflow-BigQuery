@@ -88,7 +88,10 @@ with DAG(
     ingest_task = BashOperator(
         # task to download the data
         task_id="ingest_data_task",
-        bash_command=f"curl -sSL {URL_TEMPLATE} > {OUTPUT_FILE_TEMPLATE}",
+        # add -f flag to fail the task if the download fails
+        # ex: when the data for the previous month is not available
+        # the task will fail and not proceed to the next task
+        bash_command=f"curl -sSLf {URL_TEMPLATE} > {OUTPUT_FILE_TEMPLATE}",
     )
 
     upload_task = PythonOperator(

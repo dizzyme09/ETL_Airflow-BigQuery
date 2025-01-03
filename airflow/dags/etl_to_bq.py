@@ -55,7 +55,7 @@ def upload_to_gcs(bucket, object_name, file):
 default_args = {
     "owner": "airflow",
     "start_date": datetime(2024, 1, 1),  # start task from 2024
-    "depends_on_past": True,
+    "depends_on_past": False,
     "retires": 3,
     "retry_delay": timedelta(minutes=5),
 }
@@ -65,6 +65,7 @@ with DAG(
     schedule_interval="0 6 2 * *",  # Run the task at 6:00 AM on the 2nd of every month
     default_args=default_args,
     catchup=True,
+    max_active_runs=3,
 ) as dag:
     get_prev_month_task = PythonOperator(
         # task to get the previous month
@@ -117,4 +118,16 @@ with DAG(
         },
     )
 
-get_prev_month_task >> ingest_task >> upload_task >> bigquery_external_table_task
+    remove_file_task = BashOperator(
+        # task to remove the downloaded file from the local system
+        task_id="remove_file_task",
+        bash_command=f"rm {OUTPUT_FILE_TEMPLATE}",
+    )
+
+(
+    get_prev_month_task
+    >> ingest_task
+    >> upload_task
+    >> bigquery_external_table_task
+    >> remove_file_task
+)

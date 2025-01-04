@@ -9,15 +9,12 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator
 
 from google.cloud import storage
-from airflow.providers.google.cloud.operators.bigquery import (
-    BigQueryCreateExternalTableOperator,
-)
 
 AIRFLOW_HOME = os.environ.get("AIRFLOW_HOME", "/opt/airflow/")
 
 PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
 BUCKET = os.environ.get("GCP_GCS_BUCKET")
-BIGQUERY_DATASET = os.environ.get("BIGQUERY_DATASET", "ny_taxi_data")
+BIGQUERY_DATASET = os.environ.get("BIGQUERY_DATASET", "nyc_taxi_trips")
 
 URL_PREFIX = "https://d37ci6vzurychx.cloudfront.net/trip-data"
 
@@ -61,7 +58,7 @@ default_args = {
 }
 
 with DAG(
-    dag_id="etl_to_gcs_bq",
+    dag_id="data_ingestion_gcs_yellow_taxis_dag",
     schedule_interval="0 6 2 * *",  # Run the task at 6:00 AM on the 2nd of every month
     default_args=default_args,
     catchup=True,
@@ -83,7 +80,6 @@ with DAG(
     URL_TEMPLATE = URL_PREFIX + f"/yellow_tripdata_{prev_month_date}.parquet"
     OUTPUT_FILE_NAME = f"output_{prev_month_date}.parquet"
     OUTPUT_FILE_TEMPLATE = AIRFLOW_HOME + "/" + OUTPUT_FILE_NAME
-    TABLE_NAME_TEMPLATE = f"yellow_taxi_{prev_month_date}"
 
     ingest_task = BashOperator(
         # task to download the data
@@ -105,32 +101,10 @@ with DAG(
         },
     )
 
-    bigquery_external_table_task = BigQueryCreateExternalTableOperator(
-        # task to create a table and load the data into BigQuery
-        task_id="bigquery_external_table_task",
-        table_resource={
-            "tableReference": {
-                "projectId": PROJECT_ID,
-                "datasetId": BIGQUERY_DATASET,
-                "tableId": TABLE_NAME_TEMPLATE,
-            },
-            "externalDataConfiguration": {
-                "sourceFormat": "PARQUET",
-                "sourceUris": [f"gs://{BUCKET}/raw/{OUTPUT_FILE_NAME}"],
-            },
-        },
-    )
-
     remove_file_task = BashOperator(
         # task to remove the downloaded file from the local system
         task_id="remove_file_task",
         bash_command=f"rm {OUTPUT_FILE_TEMPLATE}",
     )
 
-(
-    get_prev_month_task
-    >> ingest_task
-    >> upload_task
-    >> bigquery_external_table_task
-    >> remove_file_task
-)
+    get_prev_month_task >> ingest_task >> upload_task >> remove_file_task

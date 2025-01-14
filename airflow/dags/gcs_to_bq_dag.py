@@ -13,11 +13,17 @@ AIRFLOW_HOME = os.environ.get("AIRFLOW_HOME", "/opt/airflow/")
 
 PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
 BUCKET = os.environ.get("GCP_GCS_BUCKET")
-BIGQUERY_DATASET = os.environ.get("BIGQUERY_DATASET", "nyc_taxi_trips")
+BIGQUERY_DATASET = os.environ.get("BIGQUERY_DATASET")
 
 DATASET = "tripdata"
-TAXI_TYPE = "yellow"
-PARTITION_COLUMN = "tpep_pickup_datetime"
+
+# dictionary to map the TLC type to the datetime column name
+# that will be used for partitioning
+TLC_TYPES = {
+    "yellow": "tpep_pickup_datetime",
+    "green": "lpep_pickup_datetime",
+    "fhv": "Pickup_datetime",
+}
 
 INPUT_PART = "raw"
 
@@ -35,48 +41,48 @@ with DAG(
     catchup=False,
     max_active_runs=1,
 ) as dag:
-    move_files_gcs_task = GCSToGCSOperator(
-        # Move (copy) multiple files to the same destination bucket (data lake)
-        task_id=f"move_{TAXI_TYPE}_{DATASET}_file_task",
-        source_bucket=BUCKET,
-        source_object=f"{INPUT_PART}/{TAXI_TYPE}_*",
-        destination_bucket=BUCKET,
-        destination_object=f"{TAXI_TYPE}/{TAXI_TYPE}_{DATASET}",
-        move_object=False,
-    )
 
-    bq_external_table_task = BigQueryCreateExternalTableOperator(
-        # Create an external table in BigQuery
-        # from the files that were moved by the previous task
-        task_id=f"bq_{TAXI_TYPE}_{DATASET}_external_table_task",
-        table_resource={
-            "tableReference": {
-                "projectId": PROJECT_ID,
-                "datasetId": BIGQUERY_DATASET,
-                "tableId": f"{TAXI_TYPE}_{DATASET}_external_table",
-            },
-            "externalDataConfiguration": {
-                "autodetect": "True",
-                "sourceFormat": "PARQUET",
-                "sourceUris": [
-                    f"gs://{BUCKET}/{TAXI_TYPE}/*"
-                ],  # All files in the bucket
-            },
-        },
-    )
+    # iterate through the TLC_TYPES dictionary
+    for tlc_type, ds_col in TLC_TYPES.items():
+        move_files_gcs_task = GCSToGCSOperator(
+            # Move files from one GCS Bucket location to another
+            task_id=f"move_{tlc_type}_{DATASET}_file_task",
+            source_bucket=BUCKET,
+            source_object=f"{INPUT_PART}/{tlc_type}_*",  # wildcard to move all files starting with tlc_type
+            destination_bucket=BUCKET,
+            destination_object=f"{tlc_type}/{tlc_type}_{DATASET}",  # move to tlc_type folder
+            move_object=False,
+        )
 
-    # query for creating a partitioned table
-    CREATE_BQ_TABLE_QUERY = f"CREATE OR REPLACE TABLE {BIGQUERY_DATASET}.{TAXI_TYPE}_{DATASET} \
-            PARTITION BY DATE({PARTITION_COLUMN}) \
+        bq_external_table_task = BigQueryCreateExternalTableOperator(
+            # Create an external table in BigQuery
+            task_id=f"bq_{tlc_type}_{DATASET}_external_table_task",
+            table_resource={
+                "tableReference": {
+                    "projectId": PROJECT_ID,
+                    "datasetId": BIGQUERY_DATASET,
+                    "tableId": f"{tlc_type}_{DATASET}_external_table",
+                },
+                "externalDataConfiguration": {
+                    "autodetect": "True",
+                    "sourceFormat": "PARQUET",
+                    "sourceUris": [f"gs://{BUCKET}/{tlc_type}/*"],
+                },
+            },
+        )
+
+        # a query to create a partitioned table in BigQuery
+        CREATE_BQ_TABLE_QUERY = f"CREATE OR REPLACE TABLE {BIGQUERY_DATASET}.{tlc_type}_{DATASET} \
+            PARTITION BY DATE({ds_col}) \
             AS \
-            SELECT * FROM {BIGQUERY_DATASET}.{TAXI_TYPE}_{DATASET}_external_table;"
+            SELECT * FROM {BIGQUERY_DATASET}.{tlc_type}_{DATASET}_external_table;"
 
-    bq_create_partitioned_table_task = BigQueryInsertJobOperator(
-        # Create a partitioned table in BigQuery
-        task_id=f"bq_create_{TAXI_TYPE}_{DATASET}_partitioned_table_task",
-        configuration={
-            "query": {"query": CREATE_BQ_TABLE_QUERY, "useLegacySql": False}
-        },
-    )
+        bq_create_partitioned_table_task = BigQueryInsertJobOperator(
+            # Create a partitioned table in BigQuery
+            task_id=f"bq_create_{tlc_type}_{DATASET}_partitioned_table_task",
+            configuration={
+                "query": {"query": CREATE_BQ_TABLE_QUERY, "useLegacySql": False}
+            },
+        )
 
     move_files_gcs_task >> bq_external_table_task >> bq_create_partitioned_table_task
